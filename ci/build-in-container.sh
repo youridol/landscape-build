@@ -151,8 +151,16 @@ SFS="$(find "${V}/mnt" -name 'airootfs.sfs' | head -1)"
 [[ -n "${SFS}" ]] || { echo "FAIL: ISO 中无 airootfs.sfs" >&2; exit 1; }
 echo "airootfs.sfs: ${SFS}"
 
-unsquashfs -d "${V}/rootfs" -f "${SFS}" >/dev/null
+unsquashfs -d "${V}/rootfs" "${SFS}" > /tmp/unsquash.log 2>&1 || {
+    echo "unsquashfs 失败，最后 30 行：" >&2
+    tail -30 /tmp/unsquash.log >&2
+    exit 1
+}
 R="${V}/rootfs"
+echo "rootfs 顶层条目："
+ls "${R}" | head -20
+echo "opt 内容："
+ls -la "${R}/opt" 2>&1 | head -10
 
 check() { printf '  %-40s' "$1"; }
 ok()    { echo "OK"; }
