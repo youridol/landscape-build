@@ -393,8 +393,8 @@ cp -a /opt/landscape/static /mnt/opt/landscape/static \
 cat > /mnt/etc/systemd/system/landscape.service <<'UNIT_EOF'
 [Unit]
 Description=Landscape Router
-After=network.target
-Wants=network.target
+After=network.target landscape-bridge-prep.service
+Wants=network.target landscape-bridge-prep.service
 
 [Service]
 Type=simple
@@ -609,6 +609,56 @@ PYROWS
     else
         fatal "landscape-webserver cannot run inside the target system"
     fi
+fi
+
+# ---------------------------------------------------------------------------
+# 7c. 预建 br_lan 并固定 MAC
+# ---------------------------------------------------------------------------
+# landscape/src/lib.rs 的 init_devs 先创建网桥并立即 LinkFlags::Up，
+# 之后才把物理网卡以 LinkAttribute::Controller 挂进去。
+# Linux 网桥只在首次加入从属口时继承该口的 MAC，于是 br_lan 拿到的是
+# 内核随机地址，与 eth0 的 MAC 不一致（实测 f8:db:ba:.. vs 00:15:5d:..），
+# 在 Hyper-V 这类按源 MAC 过滤的虚拟交换机下会丢包。
+#
+# 这里预建 br_lan 并把 MAC 固定成第一块物理网卡的 MAC。
+# Landscape 之后执行 LinkBridge::new 会得到 File exists，但它只记录
+# error 后继续，沿用已存在的网桥，因此不影响后续挂载与配 IP。
+PRIMARY_IFACE="$(echo ${PHYS_IFACES} | awk '{print $1}')"
+if [[ -n "${PRIMARY_IFACE}" ]]; then
+    PRIMARY_MAC="$(cat "/sys/class/net/${PRIMARY_IFACE}/address" 2>/dev/null)"
+else
+    PRIMARY_MAC=""
+fi
+
+if [[ -n "${PRIMARY_MAC}" ]]; then
+    info "Pre-creating br_lan with MAC ${PRIMARY_MAC} (from ${PRIMARY_IFACE})"
+
+    cat > /mnt/etc/systemd/system/landscape-bridge-prep.service <<PREP_EOF
+[Unit]
+Description=Pre-create br_lan with the primary NIC MAC
+DefaultDependencies=no
+After=systemd-udevd.service
+Before=landscape.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '\
+  ip link show br_lan >/dev/null 2>&1 || ip link add name br_lan type bridge; \
+  ip link set dev br_lan address ${PRIMARY_MAC}; \
+  ip link set dev br_lan up'
+
+[Install]
+WantedBy=multi-user.target
+PREP_EOF
+
+    ln -sf /etc/systemd/system/landscape-bridge-prep.service \
+           /mnt/etc/systemd/system/multi-user.target.wants/landscape-bridge-prep.service \
+        || fatal "Cannot enable landscape-bridge-prep.service"
+    ok "br_lan will be pre-created with MAC ${PRIMARY_MAC}"
+else
+    warn "Cannot determine primary NIC MAC; br_lan keeps kernel-assigned MAC"
 fi
 
 install -d -m 0755 /mnt/etc/systemd/system/multi-user.target.wants \
