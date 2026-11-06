@@ -203,11 +203,20 @@ out = subprocess.run(['lsblk', '-dbno', 'SIZE', disk], capture_output=True, text
 disk_bytes = int(out.stdout.strip())
 
 boot_mib = 1024
-boot_bytes = boot_mib * 1024 * 1024
-reserve = 1024 * 1024 * 1024
-root_bytes = disk_bytes - boot_bytes - reserve
-if root_bytes <= 0:
+mib = 1024 * 1024
+boot_bytes = boot_mib * mib
+root_start_mib = 1 + boot_mib          # 1 MiB 对齐 + boot 分区
+root_start_bytes = root_start_mib * mib
+# 根分区从 root_start 开始，长度必须扣掉起始偏移，否则 end 会超出磁盘。
+# 长度还必须按 1 MiB 对齐（archinstall 的 Size.align() 用 1 MiB），
+# 否则 parse_arg 会 raise ValueError('Partition is misaligned')。
+tail_reserve = 64 * mib
+avail = disk_bytes - root_start_bytes - tail_reserve
+if avail <= 0:
     sys.exit(f'{disk} too small')
+root_mib = avail // mib              # 向下取整到 MiB
+if root_mib <= 0:
+    sys.exit(f'{disk} too small after alignment')
 
 def size(v, u):
     return {"value": v, "unit": u, "sector_size": {"value": 512, "unit": "B"}}
@@ -224,12 +233,12 @@ cfg = {
             "wipe": True,
             "partitions": [
                 {"status": "create", "type": "primary",
-                 "start": size(1, "MiB"), "length": size(boot_mib, "MiB"),
+                 "start": size(1, "MiB"), "size": size(boot_mib, "MiB"),
                  "fs_type": "fat32", "mountpoint": "/boot", "mount_options": [],
                  "flags": ["boot", "esp"], "btrfs": [], "dev_path": None,
                  "obj_id": "00000000-0000-4000-8000-000000000001"},
                 {"status": "create", "type": "primary",
-                 "start": size(1 + boot_mib, "MiB"), "length": size(root_bytes, "B"),
+                 "start": size(root_start_mib, "MiB"), "size": size(root_mib, "MiB"),
                  "fs_type": "ext4", "mountpoint": "/", "mount_options": [],
                  "flags": [], "btrfs": [], "dev_path": None,
                  "obj_id": "00000000-0000-4000-8000-000000000002"},
