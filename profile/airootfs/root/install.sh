@@ -414,6 +414,106 @@ WantedBy=multi-user.target
 UNIT_EOF
 
 install -d -m 0750 /mnt/root/.landscape-router || fatal "Cannot create Landscape config dir"
+
+# ---------------------------------------------------------------------------
+# 7b. 预置 landscape_init.toml：把 LAN 网段定成 192.168.3.245/24
+# ---------------------------------------------------------------------------
+# 默认 --auto 会建 br_lan 并把所有物理网卡挂进去，DHCP 服务端地址硬编码
+# 为 192.168.5.1/24（landscape-common/src/lib.rs:148-150）。
+# 用户内网已有 192.168.5.0/24，冲突。
+#
+# 注意：一旦存在 landscape_init.toml，--auto 会被跳过
+# （landscape-webserver/src/main.rs:742 三重存在性判断），
+# 而 toml 走 truncate_and_fit_from 整体替换数据库。
+# 所以必须由 toml 自己给出网桥、成员网卡、DHCP、Route LAN 全套定义。
+#
+# 成员网卡名只能在安装现场探测，构建期无法预知。
+LAN_IP="192.168.3.245"
+LAN_MASK=24
+LAN_START="192.168.3.100"
+INIT_TOML=/mnt/root/.landscape-router/landscape_init.toml
+
+install -d -m 0750 /mnt/root/.landscape-router
+
+# 探测物理网卡：排除 lo、虚拟设备、无线
+PHYS_IFACES="$(
+    for n in /sys/class/net/*; do
+        name="$(basename "$n")"
+        [[ "$name" == "lo" ]] && continue
+        [[ -d "$n/wireless" ]] && continue
+        [[ -d "$n/bridge" ]] && continue
+        [[ -e "$n/device" ]] || continue
+        echo "$name"
+    done
+)"
+
+if [[ -z "${PHYS_IFACES}" ]]; then
+    warn "No physical interfaces detected; skipping landscape_init.toml"
+else
+    info "Physical interfaces: $(echo ${PHYS_IFACES} | tr '\n' ' ')"
+
+    # version 必须与二进制自身版本完全一致，否则 boot_check 的
+    # validate_init_config_version 会报 VersionMismatch 并拒绝启动
+    # （landscape/src/boot/mod.rs:90-99）。
+    # 从二进制里提取版本，避免与 CI 的 LANDSCAPE_VERSION 脱节。
+    LAND_VER="$(/mnt/usr/local/bin/landscape-webserver --version 2>/dev/null \
+        | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    if [[ -z "${LAND_VER}" ]]; then
+        # 兜底：从 strings 里找 semver
+        LAND_VER="$(strings /mnt/usr/local/bin/landscape-webserver 2>/dev/null \
+            | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
+    fi
+    [[ -n "${LAND_VER}" ]] || fatal "Cannot determine Landscape version from the binary"
+    info "Landscape version: ${LAND_VER}"
+
+    {
+        printf 'version = "%s"\n' "${LAND_VER}"
+        echo
+        # 网桥 br_lan
+        echo '[[ifaces]]'
+        echo 'name = "br_lan"'
+        echo 'create_dev_type = "bridge"'
+        echo 'zone_type = "lan"'
+        echo 'enable_in_boot = true'
+        echo 'wifi_mode = "undefined"'
+        echo 'update_at = 0.0'
+        echo
+
+        # 每块物理网卡挂到 br_lan 下
+        for i in ${PHYS_IFACES}; do
+            echo '[[ifaces]]'
+            printf 'name = "%s"\n' "$i"
+            echo 'create_dev_type = "no_need_to_create"'
+            echo 'controller_name = "br_lan"'
+            echo 'zone_type = "undefined"'
+            echo 'enable_in_boot = true'
+            echo 'wifi_mode = "undefined"'
+            echo 'update_at = 0.0'
+            echo
+        done
+
+        # DHCP 服务端：地址改到 192.168.3.245/24
+        echo '[[dhcpv4_services]]'
+        echo 'iface_name = "br_lan"'
+        echo 'enable = true'
+        echo 'update_at = 0.0'
+        echo
+        echo '[dhcpv4_services.config]'
+        printf 'ip_range_start = "%s"\n' "${LAN_START}"
+        printf 'server_ip_addr = "%s"\n' "${LAN_IP}"
+        printf 'network_mask = %s\n' "${LAN_MASK}"
+        echo 'address_lease_time = 86400'
+        echo
+
+        # LAN 路由转发
+        echo '[[route_lans]]'
+        echo 'iface_name = "br_lan"'
+        echo 'enable = true'
+        echo 'update_at = 0.0'
+    } > "${INIT_TOML}" || fatal "Cannot write ${INIT_TOML}"
+
+    ok "landscape_init.toml written (LAN ${LAN_IP}/${LAN_MASK})"
+fi
 install -d -m 0755 /mnt/etc/systemd/system/multi-user.target.wants \
     || fatal "Cannot create multi-user.target.wants"
 ln -sf /etc/systemd/system/landscape.service \
