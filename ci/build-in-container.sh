@@ -74,7 +74,10 @@ with zipfile.ZipFile(src) as z:
     names = z.namelist()
     # 若所有成员共用一个顶层目录，去掉这一层
     tops = {n.split('/')[0] for n in names if n and not n.startswith('/')}
-    strip = len(tops) == 1 and all(n.startswith(tops.pop() + '/') or n.endswith('/') for n in names)
+    strip = len(tops) == 1 and tops.copy().pop() is not None
+    if strip:
+        top = next(iter(tops))
+        strip = all(n.startswith(top + '/') or n == top for n in names if n)
     for info in z.infolist():
         name = info.filename
         if strip:
