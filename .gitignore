@@ -1,6 +1,16 @@
-# 取证与构建过程的临时产物
-.research/
+# 构建产物
+out/
+work/
+.*-stage/
+.landscape/
+*.iso
+*.iso.sha256
+
+# 临时
 *.log
 *.tmp
-work/
-out/
+.research/
+
+# 本地仓库（由 CI 生成，不入库）
+profile/airootfs/opt/localrepo/
+profile/airootfs/opt/landscape/

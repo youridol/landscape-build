@@ -1,0 +1,51 @@
+name: build-iso
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      landscape_version:
+        description: 'Landscape release tag'
+        required: false
+        default: '0.28.0'
+
+permissions:
+  contents: write
+
+env:
+  LANDSCAPE_VERSION: ${{ github.event.inputs.landscape_version || '0.28.0' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Landscape and build local repo inside archlinux container
+        run: |
+          docker run --privileged --rm \
+            -v "${{ github.workspace }}:/work" \
+            -e LANDSCAPE_VERSION="${{ env.LANDSCAPE_VERSION }}" \
+            archlinux:latest \
+            bash /work/ci/build-in-container.sh
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: landscape-router-iso
+          path: |
+            out/*.iso
+            out/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summary
+        run: |
+          echo "## 构建产物" >> $GITHUB_STEP_SUMMARY
+          ls -lh out/ >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat out/*.sha256 >> $GITHUB_STEP_SUMMARY || true
