@@ -328,14 +328,48 @@ done
 
 [[ ${fail} -eq 0 ]] || bad "内核配置断言未全部通过"
 
-echo "--- .BTF section ---"
-python3 - "${VML}" <<'PYBTF' || bad ".BTF section 缺失"
-import sys
-data = open(sys.argv[1], 'rb').read()
-if b'.BTF\x00' not in data:
-    sys.exit(1)
-print('  OK   .BTF 存在')
-PYBTF
+echo "--- BTF 可用性 ---"
+# vmlinuz 是压缩镜像，.BTF 在解压后的 ELF 内。
+# 解压 vmlinuz 后检查 .BTF section 是否存在。
+python3 - "${VML}" > /tmp/vmlinux.raw <<'PYDEC'
+import sys, subprocess, shutil
+img = sys.argv[1]
+# 按 Magic 判断压缩格式并解压
+magics = [
+    (b'\x1f\x8b\x08', ['gzip', '-dc']),
+    (b'\xfd7zXZ\x00', ['xz', '-dc']),
+    (b'BZh',            ['bzip2', '-dc']),
+    (b'\x5d\x00\x00\x00', ['xz', '--format=lzma', '-dc']),
+    (b'\x02\x21\x4c\x18', ['lz4', '-dc']),
+    (b'\x28\xb5\x2f\xfd', ['zstd', '-dc']),
+]
+data = open(img, 'rb').read()
+for magic, cmd in magics:
+    idx = data.find(magic)
+    if idx < 0:
+        continue
+    if not shutil.which(cmd[0]):
+        continue
+    p = subprocess.run(cmd, input=data[idx:], capture_output=True)
+    if p.returncode == 0 and p.stdout:
+        sys.stdout.buffer.write(p.stdout)
+        sys.exit(0)
+sys.exit('decompress failed')
+PYDEC
+
+if [[ -s /tmp/vmlinux.raw ]]; then
+    echo "解压后大小：$(stat -c %s /tmp/vmlinux.raw) 字节"
+    if readelf -S /tmp/vmlinux.raw 2>/dev/null | grep -qE '\.BTF\b'; then
+        echo "  OK   .BTF section 存在"
+        readelf -S /tmp/vmlinux.raw 2>/dev/null | grep -E '\.BTF\b' | head -1
+    else
+        echo "  可用 section（前 20）："
+        readelf -S /tmp/vmlinux.raw 2>/dev/null | grep -oE '\.[A-Za-z_.]+' | sort -u | head -20
+        bad ".BTF section 未找到"
+    fi
+else
+    bad "无法解压 vmlinuz，无法验证 BTF"
+fi
 
 echo "::endgroup::"
 echo "所有静态检查通过"
