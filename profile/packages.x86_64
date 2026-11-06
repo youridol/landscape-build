@@ -10,6 +10,7 @@ bolt
 bpf
 brltty
 btrfs-progs
+ca-certificates
 clonezilla
 cloud-init
 cryptsetup
@@ -29,6 +30,7 @@ ethtool
 exfatprogs
 f2fs-tools
 fatresize
+findutils
 foot-terminfo
 fsarchiver
 ghostty-terminfo
@@ -83,6 +85,7 @@ open-iscsi
 open-vm-tools
 openpgp-card-tools
 openssh
+openssl
 partclone
 parted
 partimage
@@ -90,6 +93,7 @@ pcsclite
 ppp
 procps-ng
 pv
+python
 qemu-guest-agent
 refind
 reflector
@@ -114,6 +118,7 @@ udftools
 usb_modeswitch
 usbmuxd
 usbutils
+util-linux
 vim
 virtualbox-guest-utils-nox
 xdg-utils

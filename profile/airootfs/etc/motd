@@ -1,14 +1,14 @@
 
   Landscape Router Installer
-  ──────────────────────────
+  --------------------------
 
-  这是一块安装介质，不是可用的 live 环境。
+  This is an installer medium, not a live environment.
 
-  插上后会自动开始安装到目标盘。
-  安装期间请勿断电。
+  Installation to the target disk starts automatically.
+  Do not power off while it runs.
 
-  安装完成后：
-    首次访问 https://192.168.5.1:6443
-    账号 root / root
-    把电脑接到目标机的 LAN 口
+  After installation completes:
+    URL : https://192.168.5.1:6443
+    User: root / root
+    Plug your computer into a LAN port of the router.
 
