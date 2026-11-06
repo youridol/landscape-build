@@ -139,11 +139,13 @@ else
         > "${CLEANROOT}/etc/pacman.d/mirrorlist"
 fi
 
+# --sysroot 下 pacman 会用 root 内的 keyring，而 cleanroot 是空的。
+# 这里的唯一目的是下载包，不做安装，因此关闭签名校验。
 cat > "${CLEANROOT}/etc/pacman.conf" <<'CLEANCONF'
 [options]
 Architecture = auto
-SigLevel = Required DatabaseOptional
-LocalFileSigLevel = Optional
+SigLevel = Never
+LocalFileSigLevel = Never
 
 [core]
 Include = /etc/pacman.d/mirrorlist
