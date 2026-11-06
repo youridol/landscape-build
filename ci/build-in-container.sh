@@ -16,23 +16,14 @@ VERSION="${LANDSCAPE_VERSION:-0.28.0}"
 # 目标系统要装的包，必须与 install.sh 里的 packages 列表一致，
 # 否则离线安装时会在本地仓库里找不到包。
 # 固件只保留 intel + realtek 的有线网卡固件（用户只用这两家的万兆卡）。
-# 注意：archinstall 的 installer.py 第 75 行把基础包写死为
-#   __packages__ = ['base', 'sudo', 'linux-firmware', 'mkinitcpio'] + kernels
-# 其中 linux-firmware 无法通过配置移除。所以本地仓库必须提供
-# linux-firmware 元包及其全部 12 个依赖子包，否则 pacstrap 报
-# "target not found: linux-firmware" 而中止。
-# 镜像体积靠事后裁剪固件文件控制，不是靠删包。
-FIRMWARE_PKGS=(
-    linux-firmware
-    linux-firmware-amd linux-firmware-amdgpu linux-firmware-atheros
-    linux-firmware-broadcom linux-firmware-cirrus linux-firmware-intel
-    linux-firmware-mediatek linux-firmware-nvidia linux-firmware-other
-    linux-firmware-radeon linux-firmware-realtek linux-firmware-ti
-)
-
+# 阶段目标：先保证能刷机成功，固件裁剪留到后期。
+# archinstall 的 installer.py:75 把基础包写死为
+#   __packages__ = ['base','sudo','linux-firmware','mkinitcpio'] + kernels
+# linux-firmware 无法通过配置移除，其 12 个依赖子包必须全部可解析。
+# 这里直接装完整 linux-firmware 元包（含全部子包），
+# 配合干净 root 解析完整依赖闭包，确保 pacstrap 不缺任何包。
 TARGET_PKGS=(
-    base linux mkinitcpio sudo openssh
-    "${FIRMWARE_PKGS[@]}"
+    base linux linux-firmware mkinitcpio sudo openssh
     iproute2 procps-ng ppp grub efibootmgr dosfstools e2fsprogs
     bpf tcpdump ethtool iputils curl jq vim zsh parted gptfdisk
     openssl ca-certificates
@@ -122,9 +113,75 @@ ls -la "${LAND}/landscape-webserver" || echo "二进制不存在！"
 echo "::endgroup::"
 
 echo "::group::构建本地 pacman 仓库"
-# 下载目标系统所需包（含依赖闭包）到暂存目录
+# 关键：不能在构建机（容器）里直接 pacman -Syw 了事。
+# 容器本身已装 base/gzip/systemd/kmod/filesystem/zstd 等，
+# pacman 认为这些依赖"已满足"就不会下载它们的包，导致仓库的
+# 依赖闭包不完整，目标机 pacstrap 时报
+#   unable to satisfy dependency 'gzip' required by mkinitcpio
+# 解法：用 --assume-installed 把整个已安装数据库"视为未满足"，
+# 强制 pacman 从头解析完整闭包。更稳的做法是递归抓取。
+#
+# 这里分两步：
+#   1) 用 empty root 的 pacman 配置计算完整依赖闭包
+#   2) 逐个下载
+
+# 构造一个干净的 pacman 数据库，让依赖解析不受宿主已安装包影响
+CLEANROOT="${WORK}/.cleanroot"
+rm -rf "${CLEANROOT}"
+install -d -m 0755 "${CLEANROOT}/var/lib/pacman" "${CLEANROOT}/var/cache/pacman/pkg" "${CLEANROOT}/etc"
+
+# mirrorlist 用宿主的那份（容器里一定有）
+install -d -m 0755 "${CLEANROOT}/etc/pacman.d"
+if [[ -f /etc/pacman.d/mirrorlist ]]; then
+    cp /etc/pacman.d/mirrorlist "${CLEANROOT}/etc/pacman.d/mirrorlist"
+else
+    printf 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n' \
+        > "${CLEANROOT}/etc/pacman.d/mirrorlist"
+fi
+
+cat > "${CLEANROOT}/pacman.conf" <<'CLEANCONF'
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+
+[core]
+Include = /etc/pacman.d/mirrorlist
+
+[extra]
+Include = /etc/pacman.d/mirrorlist
+CLEANCONF
+
+# --sysroot 会把「所有配置目录」prepend 上去（pacman.8 原文），
+# 所以 --config 必须给 root 内相对路径 /etc/pacman.conf，
+# 不能给绝对路径，否则会变成 ${CLEANROOT}${CLEANROOT}/...
+# 同理 --cachedir 属于「配置目录」，也要用 root 内路径；
+# 目标包会落到 ${CLEANROOT}/var/cache/pacman/pkg。
+pacman -Sy --noconfirm --disable-download-timeout \
+    --sysroot "${CLEANROOT}" \
+    --config /etc/pacman.conf > /dev/null || {
+    echo "干净 root 同步数据库失败" >&2; exit 1
+}
+
 pacman -Syw --noconfirm --disable-download-timeout \
-    --cachedir "${STAGE}" "${TARGET_PKGS[@]}"
+    --sysroot "${CLEANROOT}" \
+    --config /etc/pacman.conf \
+    --cachedir /var/cache/pacman/pkg "${TARGET_PKGS[@]}" || {
+    echo "干净 root 下载依赖闭包失败" >&2; exit 1
+}
+
+# 包实际落在 sysroot 内的 cache 目录；两种可能位置都收一遍，避免遗漏
+echo "搜索已下载的包："
+for d in "${CLEANROOT}/var/cache/pacman/pkg" "${STAGE}" /var/cache/pacman/pkg; do
+    if [[ -d "${d}" ]]; then
+        n=$(find "${d}" -maxdepth 1 -name '*.pkg.tar.*' ! -name '*.sig' 2>/dev/null | wc -l)
+        echo "  ${d}: ${n} 个"
+        find "${d}" -maxdepth 1 -name '*.pkg.tar.*' ! -name '*.sig' \
+            -exec cp -a {} "${STAGE}/" \; 2>/dev/null || true
+    fi
+done
+
+echo "干净 root 下载完成"
 
 COUNT=$(find "${STAGE}" -type f \( -name '*.pkg.tar.zst' -o -name '*.pkg.tar.xz' \) ! -name '*.sig' | wc -l)
 echo "下载的包：${COUNT}"

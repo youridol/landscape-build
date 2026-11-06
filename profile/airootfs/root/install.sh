@@ -254,8 +254,8 @@ cfg = {
     "ntp": False,
     "offline": True,
     "packages": [
-        # linux-firmware 由 archinstall 的 minimal_installation 强制安装，
-        # 这里不重复列；只列额外需要的。
+        # 阶段目标：先保证刷机成功。linux-firmware 由 archinstall
+        # 强制安装（installer.py:75），这里只列额外需要的。
         "openssh",
         "iproute2", "procps-ng", "ppp", "grub", "efibootmgr", "dosfstools",
         "e2fsprogs", "bpf", "tcpdump", "ethtool", "iputils", "curl", "jq",
@@ -323,11 +323,17 @@ ok "Target system is mounted at /mnt"
 # （installer.py:75），linux-firmware 无法通过配置移除，其 12 个依赖
 # 子包必须全部在本地仓库里，否则 pacstrap 报 target not found。
 # 这里保留包本身（依赖关系与 pacman -Q 一致），只删掉用不到的固件文件。
-# 保留 intel / realtek 的有线网卡固件。
-info "Trimming unnecessary firmware files in the target system"
-
+# 注意：固件裁剪暂时停用，先保证刷机成功。
+# 恢复体积优化时再打开下面这段。
+# 固件裁剪开关：TRIM_FIRMWARE=1 才执行。
+# 当前默认关闭，先保证刷机成功，体积优化留到后期。
+TRIM_FIRMWARE="${TRIM_FIRMWARE:-0}"
 FW=/mnt/usr/lib/firmware
-if [[ -d "${FW}" ]]; then
+
+if [[ "${TRIM_FIRMWARE}" != "1" ]]; then
+    info "Firmware trimming disabled (TRIM_FIRMWARE=0); keeping full firmware"
+elif [[ -d "${FW}" ]]; then
+    info "Trimming unnecessary firmware files in the target system"
     BEFORE="$(du -sm "${FW}" 2>/dev/null | awk '{print $1}')"
 
     for d in \
