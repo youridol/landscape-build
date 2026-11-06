@@ -1,0 +1,6 @@
+# 取证与构建过程的临时产物
+.research/
+*.log
+*.tmp
+work/
+out/
