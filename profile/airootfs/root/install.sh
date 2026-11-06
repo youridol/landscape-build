@@ -46,34 +46,98 @@ else
 fi
 info "Install medium device: ${BOOT_DISK} (source ${BOOT_SRC})"
 
-# 候选 = 所有 disk 类型设备 - 装机介质
+# 候选盘筛选规则：
+#   - 类型必须是 disk
+#   - 排除装机介质自身
+#   - 排除 /dev/fd*（软驱）、loop、ram、zram、sr（光驱）
+#   - 容量必须 >= 4 GiB（软驱 4K、光驱、各种虚拟设备都会被这条挡掉）
+MIN_BYTES=$((4 * 1024 * 1024 * 1024))
+
 declare -a CANDIDATES=()
-while read -r name type; do
+declare -a CAND_BYTES=()
+declare -a CAND_DESC=()
+
+while read -r name type size; do
     [[ "${type}" == "disk" ]] || continue
+    case "${name}" in
+        fd*|loop*|ram*|zram*|sr*) continue ;;
+    esac
     dev="/dev/${name}"
     [[ "${dev}" == "${BOOT_DISK}" ]] && continue
+    # size 是 lsblk 的字节数
+    if [[ -z "${size}" || "${size}" -lt "${MIN_BYTES}" ]]; then
+        continue
+    fi
     CANDIDATES+=("${dev}")
-done < <(lsblk -dn -o NAME,TYPE 2>/dev/null)
+    CAND_BYTES+=("${size}")
+    CAND_DESC+=("$(lsblk -dno SIZE "${dev}" 2>/dev/null) $(lsblk -dno MODEL "${dev}" 2>/dev/null | tr -s ' ' | sed 's/^ *//')")
+done < <(lsblk -dno NAME,TYPE,SIZE 2>/dev/null)
 
-if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
-    echo "Visible block devices:"
-    lsblk -dn -o NAME,TYPE,SIZE,MODEL 2>/dev/null || true
-    fatal "No target disk found. Attach a disk besides the install medium."
-elif [[ ${#CANDIDATES[@]} -gt 1 ]]; then
-    echo "Multiple candidate disks found; refusing to guess:"
+# 允许用内核参数显式指定目标盘，跳过所有推断
+CMDLINE_TARGET=""
+for p in $(</proc/cmdline); do
+    case "${p}" in
+        target=*) CMDLINE_TARGET="${p#target=}" ;;
+    esac
+done
+
+if [[ -n "${CMDLINE_TARGET}" ]]; then
+    if [[ -b "${CMDLINE_TARGET}" ]]; then
+        TARGET_DISK="${CMDLINE_TARGET}"
+        ok "Target disk from kernel cmdline: ${TARGET_DISK}"
+    else
+        fatal "Kernel cmdline target=${CMDLINE_TARGET} is not a block device"
+    fi
+elif [[ ${#CANDIDATES[@]} -eq 0 ]]; then
+    echo ""
+    echo "No usable target disk. All block devices:"
+    lsblk -dno NAME,TYPE,SIZE,MODEL 2>/dev/null || true
+    echo ""
+    fatal "No disk >= 4 GiB besides the install medium."
+elif [[ ${#CANDIDATES[@]} -eq 1 ]]; then
+    TARGET_DISK="${CANDIDATES[0]}"
+    ok "Single candidate: ${TARGET_DISK}"
+else
+    # 多于一个候选：有终端就让人选，没有就中止
+    echo ""
+    echo "Multiple disks could be the target:"
+    echo ""
+    i=0
     for c in "${CANDIDATES[@]}"; do
-        printf '    %-14s %-8s %s\n' \
-            "${c}" \
-            "$(lsblk -dno SIZE "${c}" 2>/dev/null)" \
-            "$(lsblk -dno MODEL "${c}" 2>/dev/null | tr -s ' ')"
+        i=$((i + 1))
+        printf '  [%d] %-14s %s\n' "${i}" "${c}" "${CAND_DESC[$((i - 1))]}"
     done
-    fatal "More than one candidate disk. Remove the extra disk and retry."
+    echo ""
+
+    # 只有真的能从一个终端读输入时才提示；否则直接失败并给出 cmdline 办法。
+    # 注意：不能用 "-e /dev/tty" 当条件，那个文件几乎总是存在，等于没判断。
+    if [[ -c /dev/tty ]] && { [[ -t 0 ]] || [[ -t 1 ]] || [[ -t 2 ]]; }; then
+        TARGET_DISK=""
+        for _attempt in 1 2 3; do
+            printf 'Select target disk [1-%d] (this disk will be ERASED): ' "${#CANDIDATES[@]}"
+            read -r _choice < /dev/tty || _choice=""
+            if [[ "${_choice}" =~ ^[0-9]+$ ]] \
+               && [[ "${_choice}" -ge 1 ]] \
+               && [[ "${_choice}" -le ${#CANDIDATES[@]} ]]; then
+                TARGET_DISK="${CANDIDATES[$((_choice - 1))]}"
+                break
+            fi
+            printf 'Invalid input: %s\n' "${_choice:-<empty>}"
+        done
+        [[ -n "${TARGET_DISK}" ]] || fatal "No valid selection after 3 attempts."
+        ok "Target disk selected: ${TARGET_DISK}"
+    else
+        fatal "Multiple candidate disks and no terminal to choose from. Set target=/dev/xxx on the kernel cmdline."
+    fi
 fi
 
-TARGET_DISK="${CANDIDATES[0]}"
 TARGET_BYTES="$(lsblk -dbno SIZE "${TARGET_DISK}" 2>/dev/null || echo 0)"
-if [[ -z "${TARGET_BYTES}" || "${TARGET_BYTES}" -lt $((4*1024*1024*1024)) ]]; then
+if [[ -z "${TARGET_BYTES}" || "${TARGET_BYTES}" -lt "${MIN_BYTES}" ]]; then
     fatal "Target disk ${TARGET_DISK} is smaller than 4 GiB or unreadable"
+fi
+# 二次确认：绝不能是装机介质
+if [[ "${TARGET_DISK}" == "${BOOT_DISK}" ]]; then
+    fatal "Target disk equals the install medium; aborting to avoid erasing it"
 fi
 
 ok "Target disk: ${TARGET_DISK} ($(numfmt --to=iec "${TARGET_BYTES}" 2>/dev/null || echo "${TARGET_BYTES}B"))"
