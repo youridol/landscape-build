@@ -16,7 +16,6 @@ cryptsetup
 curl
 darkhttpd
 ddrescue
-dhcpcd
 diffutils
 dmidecode
 dmraid
@@ -45,7 +44,6 @@ iproute2
 iputils
 irssi
 iw
-iwd
 jfsutils
 jq
 kitty-terminfo
@@ -72,7 +70,6 @@ mkinitcpio
 mkinitcpio-archiso
 mkinitcpio-nfs-utils
 mmc-utils
-modemmanager
 mtools
 nano
 nbd
@@ -84,16 +81,13 @@ ntfsprogs
 nvme-cli
 open-iscsi
 open-vm-tools
-openconnect
 openpgp-card-tools
 openssh
-openvpn
 partclone
 parted
 partimage
 pcsclite
 ppp
-pptpclient
 procps-ng
 pv
 qemu-guest-agent
@@ -122,12 +116,6 @@ usbmuxd
 usbutils
 vim
 virtualbox-guest-utils-nox
-vpnc
-wireless-regdb
-wireless_tools
-wpa_supplicant
-wvdial
 xdg-utils
 xfsprogs
-xl2tpd
 zsh

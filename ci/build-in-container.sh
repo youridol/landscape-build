@@ -208,7 +208,16 @@ check "装机脚本可执行位"
 ok
 
 check "networkmanager 不在"
-[[ ! -d "${R}/usr/lib/NetworkManager" ]] || bad "发现 NetworkManager"
+if [[ -d "${R}/usr/lib/NetworkManager" || -e "${R}/usr/bin/nmcli" ]]; then
+    echo ""
+    echo "--- NetworkManager 相关文件 ---"
+    ls "${R}/usr/lib/NetworkManager" 2>&1 | head -5
+    echo "--- 哪个包带来的 ---"
+    if [[ -f "${R}/var/lib/pacman/local/ALPM_DB_VERSION" ]]; then
+        grep -rl 'networkmanager' "${R}/var/lib/pacman/local/"*/desc 2>/dev/null | head -5
+    fi
+    bad "发现 NetworkManager"
+fi
 ok
 
 check "systemd-resolvconf 不在"
