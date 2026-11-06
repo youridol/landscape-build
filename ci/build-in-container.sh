@@ -103,17 +103,22 @@ echo "::group::构建本地 pacman 仓库"
 pacman -Syw --noconfirm --disable-download-timeout \
     --cachedir "${STAGE}" "${TARGET_PKGS[@]}"
 
-COUNT=$(find "${STAGE}" -name '*.pkg.tar.*' -type f | wc -l)
+COUNT=$(find "${STAGE}" -type f \( -name '*.pkg.tar.zst' -o -name '*.pkg.tar.xz' \) ! -name '*.sig' | wc -l)
 echo "下载的包：${COUNT}"
 [[ "${COUNT}" -gt 0 ]] || { echo "错误：未下载到任何包" >&2; exit 1; }
 
 REPO="${PROFILE}/airootfs/opt/localrepo"
 install -d -m 0755 "${REPO}"
-find "${STAGE}" -name '*.pkg.tar.*' -type f -exec cp -a {} "${REPO}/" \;
+find "${STAGE}" -type f \( -name '*.pkg.tar.zst' -o -name '*.pkg.tar.xz' \) ! -name '*.sig' \
+    -exec cp -a {} "${REPO}/" \;
 
 cd "${REPO}"
-repo-add -n -R -q custom.db.tar.gz ./*.pkg.tar.*
-echo "仓库内包数：$(find . -name '*.pkg.tar.*' | wc -l)"
+shopt -s nullglob
+PKGFILES=(./*.pkg.tar.zst ./*.pkg.tar.xz)
+shopt -u nullglob
+[[ ${#PKGFILES[@]} -gt 0 ]] || { echo "错误：仓库目录中没有包文件" >&2; exit 1; }
+repo-add -n -R -q custom.db.tar.gz "${PKGFILES[@]}"
+echo "仓库内包数：$(find . -type f \( -name '*.pkg.tar.zst' -o -name '*.pkg.tar.xz' \) ! -name '*.sig' | wc -l)"
 ls -la custom.db.tar.gz custom.files.tar.gz 2>/dev/null || ls -la custom.*
 echo "::endgroup::"
 
@@ -167,7 +172,7 @@ check "本地仓库 db"
 ok
 
 check "本地仓库包数"
-N=$(find "${R}/opt/localrepo" -name '*.pkg.tar.*' | wc -l)
+N=$(find "${R}/opt/localrepo" -type f \( -name '*.pkg.tar.zst' -o -name '*.pkg.tar.xz' \) ! -name '*.sig' | wc -l)
 [[ "${N}" -gt 0 ]] || bad "仓库为空"
 ok; echo "      (${N} packages)"
 
