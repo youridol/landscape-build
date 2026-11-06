@@ -329,9 +329,24 @@ done
 [[ ${fail} -eq 0 ]] || bad "内核配置断言未全部通过"
 
 echo "--- BTF 可用性 ---"
-# vmlinuz 是压缩镜像，.BTF 在解压后的 ELF 内。
-# 解压 vmlinuz 后检查 .BTF section 是否存在。
-python3 - "${VML}" > /tmp/vmlinux.raw <<'PYDEC'
+echo "vmlinuz 大小: $(stat -c %s "${VML}") 字节"
+echo "vmlinuz 类型: $(file -b "${VML}" 2>/dev/null || echo n/a)"
+echo "前 16 字节: $(od -An -tx1 -N16 "${VML}" | tr -s ' ')"
+echo "可用解压工具:"
+for t in zstd xz gzip bzip2 lz4 lzop; do
+    printf '  %-6s %s\n' "$t" "$(command -v "$t" 2>/dev/null || echo 缺失)"
+done
+echo "文件内压缩 magic 首次出现位置:"
+python3 - "${VML}" <<'PYSCAN'
+import sys
+data = open(sys.argv[1],'rb').read()
+for name, m in [('zstd', b'\x28\xb5\x2f\xfd'), ('xz', b'\xfd7zXZ\x00'),
+                ('gzip', b'\x1f\x8b\x08'), ('bzip2', b'BZh'),
+                ('lz4', b'\x02\x21\x4c\x18')]:
+    print(f'  {name}: {data.find(m)}')
+PYSCAN
+
+python3 - "${VML}" > /tmp/vmlinux.raw 2>/tmp/pydec.err <<'PYDEC'
 import sys, subprocess, shutil, struct
 img = sys.argv[1]
 data = open(img, 'rb').read()
@@ -368,6 +383,7 @@ for magic, cmd in magics:
             sys.exit(0)
 sys.exit('decompress failed')
 PYDEC
+echo "解压脚本 stderr: $(cat /tmp/pydec.err 2>/dev/null)"
 
 if [[ -s /tmp/vmlinux.raw ]]; then
     echo "解压后大小：$(stat -c %s /tmp/vmlinux.raw) 字节"
