@@ -57,21 +57,24 @@ declare -a CANDIDATES=()
 declare -a CAND_BYTES=()
 declare -a CAND_DESC=()
 
-while read -r name type size; do
+# 注意：lsblk 的 SIZE 默认带单位（60G / 1.4T），不能直接做数值比较。
+# 必须用 -b（bytes）取值，否则 [[ ... -lt ... ]] 会报
+# "value too great for base" 并让判断失效。
+while read -r name type; do
     [[ "${type}" == "disk" ]] || continue
     case "${name}" in
         fd*|loop*|ram*|zram*|sr*) continue ;;
     esac
     dev="/dev/${name}"
     [[ "${dev}" == "${BOOT_DISK}" ]] && continue
-    # size 是 lsblk 的字节数
-    if [[ -z "${size}" || "${size}" -lt "${MIN_BYTES}" ]]; then
+    size="$(lsblk -dbno SIZE "${dev}" 2>/dev/null || echo 0)"
+    if [[ -z "${size}" || ! "${size}" =~ ^[0-9]+$ || "${size}" -lt "${MIN_BYTES}" ]]; then
         continue
     fi
     CANDIDATES+=("${dev}")
     CAND_BYTES+=("${size}")
     CAND_DESC+=("$(lsblk -dno SIZE "${dev}" 2>/dev/null) $(lsblk -dno MODEL "${dev}" 2>/dev/null | tr -s ' ' | sed 's/^ *//')")
-done < <(lsblk -dno NAME,TYPE,SIZE 2>/dev/null)
+done < <(lsblk -dno NAME,TYPE 2>/dev/null)
 
 # 允许用内核参数显式指定目标盘，跳过所有推断
 CMDLINE_TARGET=""
@@ -160,7 +163,9 @@ ParallelDownloads = 5
 SigLevel    = Required DatabaseOptional
 LocalFileSigLevel = Optional
 
-[localrepo]
+# 段落名必须与数据库文件名一致：pacman 会去找 <段名>.db。
+# 这里的数据库是 custom.db.tar.gz，所以段落必须叫 [custom]。
+[custom]
 SigLevel = Optional TrustAll
 Server = file:///opt/localrepo
 PACMAN_EOF
@@ -169,7 +174,13 @@ mkdir -p /var/lib/pacman
 pacman-key --init >/dev/null 2>&1 || warn "pacman-key --init failed (continuing)"
 pacman-key --populate archlinux >/dev/null 2>&1 || warn "pacman-key --populate failed (continuing)"
 
-if ! pacman -Sy --noconfirm >/dev/null 2>&1; then
+if ! pacman -Sy --noconfirm > /tmp/pacman-sync.log 2>&1; then
+    echo "--- pacman -Sy output ---"
+    cat /tmp/pacman-sync.log
+    echo "--- /etc/pacman.conf ---"
+    cat /etc/pacman.conf
+    echo "--- ${REPO} contents (first 20) ---"
+    ls -la "${REPO}" | head -20
     fatal "Cannot sync the bundled local repository"
 fi
 ok "Local repository ready"
