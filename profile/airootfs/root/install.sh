@@ -400,9 +400,11 @@ Wants=network.target
 Type=simple
 User=root
 Group=root
+# 不要设 DATABASE_URL：实测 sqlite:/// 前缀会导致
+# SqliteError code 14 "unable to open database file"，
+# 数据库根本创建不出来。让 LANDSCAPE_CONF_PATH 决定路径即可。
 Environment=LANDSCAPE_CONF_PATH=/root/.landscape-router
 Environment=LANDSCAPE_WEB_ROOT=/opt/landscape/static
-Environment=DATABASE_URL=sqlite:///root/.landscape-router/landscape_db.sqlite
 ExecStart=/usr/local/bin/landscape-webserver
 Restart=always
 RestartSec=3
@@ -560,7 +562,55 @@ print(f'  OK  version={data["version"]}  ifaces={len(ifaces)}  lan={want_ip}')
 PYVERIFY
 
     ok "landscape_init.toml written (LAN ${LAN_IP}/${LAN_MASK})"
+
+    # 安装期预检：在目标系统里跑一次二进制，让它建库并导入 toml。
+    # 这样即使首次开机时 eBPF 初始化异常，配置也已经落库，
+    # 不会出现"toml 存在但锁文件已写、配置永久失效"的局面。
+    info "Pre-seeding the Landscape database in the target system"
+    if chroot /mnt /usr/local/bin/landscape-webserver --version >/dev/null 2>&1; then
+        # 用短超时跑一次；进程会因 eBPF 或监听端口等原因无法常驻，
+        # 只关心它是否完成了建库与 toml 导入。
+        timeout 25 chroot /mnt /usr/local/bin/landscape-webserver \
+            > /tmp/land-boot.log 2>&1 || true
+
+        DB=/mnt/root/.landscape-router/landscape_db.sqlite
+        if [[ -f "${DB}" ]]; then
+            ROWS="$(python3 - "${DB}" <<'PYROWS'
+import sqlite3, sys
+try:
+    con = sqlite3.connect(sys.argv[1])
+    cur = con.cursor()
+    parts = []
+    for t in ('net_iface_configs', 'dhcp_v4_server_configs', 'route_lan_service_configs'):
+        try:
+            cur.execute(f'SELECT COUNT(*) FROM {t}')
+            parts.append(f'{t}={cur.fetchone()[0]}')
+        except sqlite3.Error:
+            parts.append(f'{t}=ERR')
+    print(' '.join(parts))
+except Exception as e:
+    print(f'ERR {e}')
+PYROWS
+)"
+            info "DB rows: ${ROWS}"
+            case "${ROWS}" in
+                *"net_iface_configs=0"*|*"net_iface_configs=ERR"*)
+                    echo "--- landscape boot log ---"
+                    tail -40 /tmp/land-boot.log 2>/dev/null
+                    fatal "Landscape did not import landscape_init.toml"
+                    ;;
+            esac
+            ok "Database pre-seeded"
+        else
+            echo "--- landscape boot log ---"
+            tail -40 /tmp/land-boot.log 2>/dev/null
+            fatal "Landscape failed to create its database"
+        fi
+    else
+        fatal "landscape-webserver cannot run inside the target system"
+    fi
 fi
+
 install -d -m 0755 /mnt/etc/systemd/system/multi-user.target.wants \
     || fatal "Cannot create multi-user.target.wants"
 ln -sf /etc/systemd/system/landscape.service \
