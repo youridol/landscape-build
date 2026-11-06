@@ -225,11 +225,14 @@ fi
 ok
 
 echo "--- 内核配置断言 ---"
-VML="$(find "${R}" -name 'vmlinuz-linux' | head -1)"
+# mkarchiso 的 _cleanup_pacstrap_dir 会清空 airootfs 的 /boot，
+# 内核实际位于 ISO 的 <install_dir>/boot/<arch>/ 下
+VML="$(find "${V}/mnt" -name 'vmlinuz-linux' | head -1)"
+[[ -n "${VML}" ]] || VML="$(find "${R}" -name 'vmlinuz-linux' | head -1)"
 [[ -n "${VML}" ]] || bad "找不到 vmlinuz-linux"
 echo "vmlinuz: ${VML}"
 
-IKC="$(find "${R}" -name 'extract-ikconfig' -path '*/scripts/*' | head -1)"
+IKC="$(find "${R}" "${V}/mnt" -name 'extract-ikconfig' -path '*/scripts/*' 2>/dev/null | head -1)"
 if [[ -n "${IKC}" ]]; then
     bash "${IKC}" "${VML}" > /tmp/kconfig 2>/dev/null || true
 fi
