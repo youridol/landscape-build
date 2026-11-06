@@ -332,28 +332,40 @@ echo "--- BTF 可用性 ---"
 # vmlinuz 是压缩镜像，.BTF 在解压后的 ELF 内。
 # 解压 vmlinuz 后检查 .BTF section 是否存在。
 python3 - "${VML}" > /tmp/vmlinux.raw <<'PYDEC'
-import sys, subprocess, shutil
+import sys, subprocess, shutil, struct
 img = sys.argv[1]
-# 按 Magic 判断压缩格式并解压
-magics = [
-    (b'\x1f\x8b\x08', ['gzip', '-dc']),
-    (b'\xfd7zXZ\x00', ['xz', '-dc']),
-    (b'BZh',            ['bzip2', '-dc']),
-    (b'\x5d\x00\x00\x00', ['xz', '--format=lzma', '-dc']),
-    (b'\x02\x21\x4c\x18', ['lz4', '-dc']),
-    (b'\x28\xb5\x2f\xfd', ['zstd', '-dc']),
-]
 data = open(img, 'rb').read()
+
+# Arch 的 vmlinuz-linux 是「压缩内核 + EFI stub」的 PE 镜像（自解压），
+# 压缩流不在文件开头。逐个偏移尝试所有已知压缩 magic。
+magics = [
+    (b'\x28\xb5\x2f\xfd', ['zstd', '-dc']),
+    (b'\xfd7zXZ\x00',      ['xz', '-dc']),
+    (b'\x1f\x8b\x08',     ['gzip', '-dc']),
+    (b'BZh',                 ['bzip2', '-dc']),
+    (b'\x02\x21\x4c\x18', ['lz4', '-dc']),
+]
+
 for magic, cmd in magics:
-    idx = data.find(magic)
-    if idx < 0:
-        continue
     if not shutil.which(cmd[0]):
         continue
-    p = subprocess.run(cmd, input=data[idx:], capture_output=True)
-    if p.returncode == 0 and p.stdout:
-        sys.stdout.buffer.write(p.stdout)
-        sys.exit(0)
+    pos = 0
+    while True:
+        idx = data.find(magic, pos)
+        if idx < 0:
+            break
+        pos = idx + 1
+        p = subprocess.run(cmd, input=data[idx:], capture_output=True)
+        if p.returncode != 0 or not p.stdout:
+            continue
+        # 解压成功且结果是 ELF 才算命中
+        if p.stdout[:4] == b'\x7fELF':
+            sys.stdout.buffer.write(p.stdout)
+            sys.exit(0)
+        # zstd/xz 可能在尾部有填充；只要解压出大量数据也接受
+        if len(p.stdout) > 1024 * 1024:
+            sys.stdout.buffer.write(p.stdout)
+            sys.exit(0)
 sys.exit('decompress failed')
 PYDEC
 
