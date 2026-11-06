@@ -48,6 +48,11 @@ jobs:
             archlinux:latest \
             bash /work/ci/build-in-container.sh
 
+      - name: Fix ownership of container-written files
+        run: |
+          # 容器内以 root 写入挂载卷，宿主机 runner 无法移动/删除这些文件
+          sudo chown -R "$(id -u):$(id -g)" out/
+
       - name: Rename produced ISO to artifact name
         run: |
           set -euo pipefail
