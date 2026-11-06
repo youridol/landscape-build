@@ -139,7 +139,7 @@ else
         > "${CLEANROOT}/etc/pacman.d/mirrorlist"
 fi
 
-cat > "${CLEANROOT}/pacman.conf" <<'CLEANCONF'
+cat > "${CLEANROOT}/etc/pacman.conf" <<'CLEANCONF'
 [options]
 Architecture = auto
 SigLevel = Required DatabaseOptional
