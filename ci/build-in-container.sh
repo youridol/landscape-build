@@ -380,6 +380,24 @@ if [[ -s /tmp/vmlinux.raw ]]; then
         bad ".BTF section 未找到"
     fi
 else
+    echo "--- vmlinuz 诊断 ---"
+    echo "大小: $(stat -c %s "${VML}")"
+    echo "文件类型: $(file -b "${VML}" 2>/dev/null || echo n/a)"
+    echo "前 32 字节:"; od -An -tx1 -N32 "${VML}"
+    echo "可用解压工具:"
+    for t in zstd xz gzip bzip2 lz4 lzop; do
+        printf '  %-6s %s\n' "$t" "$(command -v $t || echo '缺失')"
+    done
+    echo "文件内已知压缩 magic 的位置:"
+    python3 - "${VML}" <<'PYSCAN'
+import sys
+data = open(sys.argv[1],'rb').read()
+for name, m in [('zstd', b'\x28\xb5\x2f\xfd'), ('xz', b'\xfd7zXZ\x00'),
+                ('gzip', b'\x1f\x8b\x08'), ('bzip2', b'BZh'),
+                ('lz4', b'\x02\x21\x4c\x18'), ('lzma', b'\x5d\x00\x00\x00')]:
+    pos = data.find(m)
+    print(f'  {name}: {pos if pos>=0 else "未找到"}')
+PYSCAN
     bad "无法解压 vmlinuz，无法验证 BTF"
 fi
 
