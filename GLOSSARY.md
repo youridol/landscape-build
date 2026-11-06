@@ -45,8 +45,16 @@ _Avoid_: 内核检查、配置校验
 Landscape 取得某块网卡的独占控制权，包括配置地址、下发 DHCP、施加 eBPF 规则。有活动网络管理器时接管会失败。
 
 **`--auto` 初始化**：
-Landscape 在完全无配置的首次启动时自建 LAN 网桥、把所有物理网卡挂进去、并起 LAN 侧 DHCP 服务端的动作。它不配置 WAN。
+Landscape 在完全无配置的首次启动时自建 LAN 网桥、把所有物理网卡挂进去、并起 LAN 侧 DHCP 服务端的动作。它不配置 WAN。本项目的运行时初始化不走它，改由**初始化配置**完成。
+_Avoid_: 自动配置
+
+**初始化配置**：
+安装期写入 `/root/.landscape-router/landscape_init.toml` 的文件，Landscape 首次启动时整体导入数据库。它替代 `--auto`，因此必须自带网桥、成员网卡、DHCP、RouteLAN 四段，且 `version` 必须等于二进制版本。
 
 **首次访问地址**：
-`--auto` 初始化后可达的 Web UI 地址，只能从接在 LAN 口的机器访问。
+装好后 Web UI 的可达地址，由**初始化配置**里的 `server_ip_addr` 决定（本项目为 `192.168.3.245`），只能从接在 LAN 口的机器访问。
 _Avoid_: 管理地址、默认网关
+
+**网桥预建**：
+在 Landscape 启动前用独立 systemd 单元创建 LAN 网桥并固定 MAC 的动作。`init_devs` 建桥时不给 MAC，内核分配随机地址，真机上会导致有 IP 但不通。
+_Avoid_: 桥接初始化
