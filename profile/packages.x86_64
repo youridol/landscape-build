@@ -56,9 +56,9 @@ lftp
 libfido2
 libusb-compat
 linux
-linux-firmware
-linux-firmware-marvell
-livecd-sounds
+linux-firmware-intel
+linux-firmware-realtek
+linux-firmware-whence
 lsscsi
 lvm2
 lynx
@@ -66,8 +66,6 @@ man-db
 man-pages
 mc
 mdadm
-memtest86+
-memtest86+-efi
 mkinitcpio
 mkinitcpio-archiso
 mkinitcpio-nfs-utils
@@ -104,7 +102,6 @@ sdparm
 sequoia-sq
 sg3_utils
 smartmontools
-sof-firmware
 squashfs-tools
 sudo
 syslinux

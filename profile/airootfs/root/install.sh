@@ -234,7 +234,8 @@ cfg = {
     "ntp": False,
     "offline": True,
     "packages": [
-        "base", "linux", "linux-firmware", "mkinitcpio", "sudo", "openssh",
+        "base", "linux", "linux-firmware-intel", "linux-firmware-realtek",
+        "mkinitcpio", "sudo", "openssh",
         "iproute2", "procps-ng", "ppp", "grub", "efibootmgr", "dosfstools",
         "e2fsprogs", "bpf", "tcpdump", "ethtool", "iputils", "curl", "jq",
         "vim", "zsh", "parted", "gptfdisk", "openssl", "ca-certificates"

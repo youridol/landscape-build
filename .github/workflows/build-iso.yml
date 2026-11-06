@@ -25,27 +25,90 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch Landscape and build local repo inside archlinux container
+      - name: Compute artifact name
+        id: meta
+        run: |
+          # 产物名带构建时间与提交号，便于区分每次调试产物
+          SHORT_SHA="$(git rev-parse --short=8 HEAD)"
+          STAMP="$(date -u +%Y%m%d-%H%M)"
+          NAME="landscape-router-${STAMP}-${SHORT_SHA}"
+          echo "name=${NAME}" >> $GITHUB_OUTPUT
+          echo "stamp=${STAMP}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Artifact name: ${NAME}"
+
+      - name: Build inside archlinux container
+        env:
+          ARTIFACT_NAME: ${{ steps.meta.outputs.name }}
         run: |
           docker run --privileged --rm \
             -v "${{ github.workspace }}:/work" \
             -e LANDSCAPE_VERSION="${{ env.LANDSCAPE_VERSION }}" \
+            -e ARTIFACT_NAME="${ARTIFACT_NAME}" \
             archlinux:latest \
             bash /work/ci/build-in-container.sh
 
-      - name: Upload ISO
+      - name: Rename produced ISO to artifact name
+        run: |
+          set -euo pipefail
+          NAME="${{ steps.meta.outputs.name }}"
+          SRC="$(ls out/*.iso | head -1)"
+          DST="out/${NAME}.iso"
+          mv "${SRC}" "${DST}"
+          rm -f out/*.sha256
+          sha256sum "${DST}" | tee "out/${NAME}.iso.sha256"
+          ls -lh out/
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: landscape-router-iso
+          name: ${{ steps.meta.outputs.name }}
           path: |
             out/*.iso
             out/*.sha256
           if-no-files-found: error
           retention-days: 14
 
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: iso-latest
+          ARTIFACT_NAME: ${{ steps.meta.outputs.name }}
+          STAMP: ${{ steps.meta.outputs.stamp }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          ISO="out/${ARTIFACT_NAME}.iso"
+          SHA="out/${ARTIFACT_NAME}.iso.sha256"
+
+          # 调试阶段：固定使用同一个 tag，每次覆盖，只保留最新产物。
+          # 文件名带时间戳与提交号，所以历史产物不会互相覆盖同名文件。
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} exists; deleting old assets"
+            for a in $(gh release view "${RELEASE_TAG}" --json assets -q '.assets[].name'); do
+              gh release delete-asset "${RELEASE_TAG}" "$a" -y || true
+            done
+            NOTES="Build ${STAMP} (commit ${SHORT_SHA})"
+            gh release edit "${RELEASE_TAG}" --notes "${NOTES}"
+          else
+            gh release create "${RELEASE_TAG}" \
+              --title "Landscape Router ISO (latest build)" \
+              --notes "Build ${STAMP} (commit ${SHORT_SHA})" \
+              --prerelease
+          fi
+
+          gh release upload "${RELEASE_TAG}" "${ISO}" "${SHA}" --clobber
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 下载" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat "${SHA}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${ARTIFACT_NAME}.iso" >> $GITHUB_STEP_SUMMARY
+
       - name: Summary
         run: |
           echo "## 构建产物" >> $GITHUB_STEP_SUMMARY
           ls -lh out/ >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          cat out/*.sha256 >> $GITHUB_STEP_SUMMARY || true

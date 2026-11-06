@@ -13,10 +13,15 @@ DL="${WORK}/.landscape"
 VERSION="${LANDSCAPE_VERSION:-0.28.0}"
 
 # 目标系统要装的包，同时是本地仓库的内容
+# 目标系统要装的包，必须与 install.sh 里的 packages 列表一致，
+# 否则离线安装时会在本地仓库里找不到包。
+# 固件只保留 intel + realtek 的有线网卡固件（用户只用这两家的万兆卡）。
 TARGET_PKGS=(
-    base linux linux-firmware mkinitcpio sudo openssh
+    base linux linux-firmware-intel linux-firmware-realtek
+    mkinitcpio sudo openssh
     iproute2 procps-ng ppp grub efibootmgr dosfstools e2fsprogs
     bpf tcpdump ethtool iputils curl jq vim zsh parted gptfdisk
+    openssl ca-certificates
 )
 
 mkdir -p "${OUT}" "${STAGE}" "${DL}"
