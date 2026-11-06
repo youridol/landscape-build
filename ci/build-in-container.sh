@@ -16,9 +16,23 @@ VERSION="${LANDSCAPE_VERSION:-0.28.0}"
 # 目标系统要装的包，必须与 install.sh 里的 packages 列表一致，
 # 否则离线安装时会在本地仓库里找不到包。
 # 固件只保留 intel + realtek 的有线网卡固件（用户只用这两家的万兆卡）。
+# 注意：archinstall 的 installer.py 第 75 行把基础包写死为
+#   __packages__ = ['base', 'sudo', 'linux-firmware', 'mkinitcpio'] + kernels
+# 其中 linux-firmware 无法通过配置移除。所以本地仓库必须提供
+# linux-firmware 元包及其全部 12 个依赖子包，否则 pacstrap 报
+# "target not found: linux-firmware" 而中止。
+# 镜像体积靠事后裁剪固件文件控制，不是靠删包。
+FIRMWARE_PKGS=(
+    linux-firmware
+    linux-firmware-amd linux-firmware-amdgpu linux-firmware-atheros
+    linux-firmware-broadcom linux-firmware-cirrus linux-firmware-intel
+    linux-firmware-mediatek linux-firmware-nvidia linux-firmware-other
+    linux-firmware-radeon linux-firmware-realtek linux-firmware-ti
+)
+
 TARGET_PKGS=(
-    base linux linux-firmware-intel linux-firmware-realtek
-    mkinitcpio sudo openssh
+    base linux mkinitcpio sudo openssh
+    "${FIRMWARE_PKGS[@]}"
     iproute2 procps-ng ppp grub efibootmgr dosfstools e2fsprogs
     bpf tcpdump ethtool iputils curl jq vim zsh parted gptfdisk
     openssl ca-certificates

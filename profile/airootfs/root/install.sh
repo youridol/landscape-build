@@ -254,8 +254,9 @@ cfg = {
     "ntp": False,
     "offline": True,
     "packages": [
-        "base", "linux", "linux-firmware-intel", "linux-firmware-realtek",
-        "mkinitcpio", "sudo", "openssh",
+        # linux-firmware 由 archinstall 的 minimal_installation 强制安装，
+        # 这里不重复列；只列额外需要的。
+        "openssh",
         "iproute2", "procps-ng", "ppp", "grub", "efibootmgr", "dosfstools",
         "e2fsprogs", "bpf", "tcpdump", "ethtool", "iputils", "curl", "jq",
         "vim", "zsh", "parted", "gptfdisk", "openssl", "ca-certificates"
@@ -314,6 +315,38 @@ if [[ ! -d /mnt/etc ]] || [[ ! -f /mnt/etc/pacman.conf ]]; then
     fatal "/mnt does not contain an installed system"
 fi
 ok "Target system is mounted at /mnt"
+
+# ---------------------------------------------------------------------------
+# 5b. 裁剪目标系统的固件
+# ---------------------------------------------------------------------------
+# archinstall 把基础包写死为 base/sudo/linux-firmware/mkinitcpio
+# （installer.py:75），linux-firmware 无法通过配置移除，其 12 个依赖
+# 子包必须全部在本地仓库里，否则 pacstrap 报 target not found。
+# 这里保留包本身（依赖关系与 pacman -Q 一致），只删掉用不到的固件文件。
+# 保留 intel / realtek 的有线网卡固件。
+info "Trimming unnecessary firmware files in the target system"
+
+FW=/mnt/usr/lib/firmware
+if [[ -d "${FW}" ]]; then
+    BEFORE="$(du -sm "${FW}" 2>/dev/null | awk '{print $1}')"
+
+    for d in \
+        nvidia amdgpu radeon \
+        ath10k ath11k ath12k ath6k ath9k \
+        mediatek rtw88 rtw89 \
+        mrvl mellanox qed qlogic liquidio nfp \
+        brcm cirrus ti-connectivity
+    do
+        if [[ -e "${FW}/${d}" ]]; then
+            rm -rf "${FW:?}/${d}"
+        fi
+    done
+
+    AFTER="$(du -sm "${FW}" 2>/dev/null | awk '{print $1}')"
+    ok "Firmware: ${BEFORE:-?} MiB -> ${AFTER:-?} MiB"
+else
+    warn "${FW} not found; skip firmware trimming"
+fi
 
 # ---------------------------------------------------------------------------
 # 6. 恢复正式镜像源（ADR-0004）
