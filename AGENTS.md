@@ -35,17 +35,31 @@ docker run --privileged --rm -v "$PWD:/work" \
 
 ## 已验证的事实
 
-以下均在真机刷写后实测过（2026-11-06，Hyper-V 桥接，单网卡 `eth0`）：
+分两类。**运行时**指真机刷写后通过 API 或系统命令观察到的；**构建期**指 CI 对产物做的静态检查，不代表运行时行为。
+
+### 运行时（2026-11-06，Hyper-V 桥接，单网卡 `eth0`，两次独立复测结果一致）
 
 - Web UI 可登录：`POST /api/auth/login`，账号 `root`/`root`，返回 JWT
-- 抽查 52 个只读 API 端点：51 个 200，1 个（`dns/service/check`）400，原因是缺必填参数 `flow_id`，属正常
+- 抽查 17 个核心端点全部 200；另一轮抽查 52 个只读端点，51 个 200，1 个（`dns/service/check`）400 因缺必填参数 `flow_id`，属正常
 - `br_lan` 建立成功，MAC 与 `eth0` 一致，`carrier: true`
-- LAN 侧 DHCP、路由、DNS、metrics 服务全部 `running`
 - `br_lan` 拿到 `192.168.3.245/24`，`mode: Reachable`
-- LAN 设备能被 ARP 发现（实测 16 台）
-- 内核配置断言 19 项全部通过（`REQ_Y` 15 项要求 `=y`，`REQ_ANYM` 4 项接受 `=y`/`=m`），`.BTF` section 存在
+- LAN 侧 DHCP、路由、DNS、metrics 服务均 `running`
+- LAN 设备能被 ARP 发现（复测两次分别 16、18 台，数量随环境变化，不是固定值）
+- 进程 RSS 约 128 MB
 
-**未验证**：WAN 上线后的 NAT/转发、eBPF 数据面实际转发效果、DHCP 服务端真实下发、双网口场景。
+### 构建期（CI 静态检查，不启动 ISO）
+
+- 内核配置断言 19 项通过（`REQ_Y` 15 项要求 `=y`，`REQ_ANYM` 4 项接受 `=y`/`=m`）
+- `.BTF` section 存在
+- Landscape 二进制与 `static.zip` 的 SHA256 与官方 release 一致
+
+### 未验证
+
+- WAN 上线后的 NAT / 转发 / 实际出网
+- eBPF 数据面真实转发效果（`xdp_redirect_able` 在无 WAN 时恒为 `false`）
+- DHCP 服务端真实下发（当前环境已有别的 DHCP，设备均 `source=arp`）
+- 双网口 WAN/LAN 场景
+- DNS 对外解析（无 WAN 时实测 `SERVFAIL`，属预期）
 
 ## 踩过的坑（每条都有实测依据）
 
