@@ -8,7 +8,7 @@
   Do not power off while it runs.
 
   After installation completes:
-    URL : https://192.168.5.1:6443
+    URL : https://192.168.3.245:6443
     User: root / root
     Plug your computer into a LAN port of the router.
 

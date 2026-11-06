@@ -46,7 +46,7 @@ echo "::endgroup::"
 
 echo "::group::下载 Landscape ${VERSION}"
 BASE="https://github.com/ThisSeanZhang/landscape/releases/download/v${VERSION}"
-for f in landscape-webserver-x86_64 static.zip; do
+for f in landscape-webserver-x86_64-static static.zip; do
     echo "下载 ${f}"
     curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
         -o "${DL}/${f}" "${BASE}/${f}"
@@ -56,7 +56,7 @@ ls -la "${DL}"
 # 校验值：SHASUM256sum.txt 可能不存在，缺失则告警不阻断
 if curl -fsSL --retry 3 -o "${DL}/SHASUM256sum.txt" "${BASE}/SHASUM256sum.txt"; then
     cd "${DL}"
-    for f in landscape-webserver-x86_64 static.zip; do
+    for f in landscape-webserver-x86_64-static static.zip; do
         expected="$(grep -E "[[:space:]]\*?${f}\$" SHASUM256sum.txt | awk '{print $1}' | head -1 || true)"
         if [[ -z "${expected}" ]]; then
             echo "警告：校验文件中无 ${f} 条目，跳过"
@@ -74,7 +74,7 @@ echo "::endgroup::"
 echo "::group::布置 Landscape 到 airootfs"
 LAND="${PROFILE}/airootfs/opt/landscape"
 install -d -m 0755 "${LAND}"
-install -m 0755 "${DL}/landscape-webserver-x86_64" "${LAND}/landscape-webserver"
+install -m 0755 "${DL}/landscape-webserver-x86_64-static" "${LAND}/landscape-webserver"
 
 python3 - "${DL}/static.zip" "${LAND}/static" <<'PYUNZIP'
 import sys, zipfile, os, pathlib

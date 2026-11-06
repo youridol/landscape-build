@@ -448,7 +448,20 @@ PHYS_IFACES="$(
 )"
 
 if [[ -z "${PHYS_IFACES}" ]]; then
-    warn "No physical interfaces detected; skipping landscape_init.toml"
+    # 不能静默跳过：跳过就等于回落到 --auto 的 192.168.5.1，
+    # 会与用户内网冲突且没有任何提示。
+    echo "--- /sys/class/net contents ---"
+    ls -la /sys/class/net/ 2>&1
+    echo "--- 每个条目的判定依据 ---"
+    for n in /sys/class/net/*; do
+        name="$(basename "$n")"
+        printf '  %-12s wireless=%s bridge=%s device=%s\n' \
+            "$name" \
+            "$([[ -d "$n/wireless" ]] && echo yes || echo no)" \
+            "$([[ -d "$n/bridge" ]] && echo yes || echo no)" \
+            "$([[ -e "$n/device" ]] && echo yes || echo no)"
+    done
+    fatal "No physical interfaces detected; cannot generate landscape_init.toml"
 else
     info "Physical interfaces: $(echo ${PHYS_IFACES} | tr '\n' ' ')"
 
@@ -512,6 +525,40 @@ else
         echo 'update_at = 0.0'
     } > "${INIT_TOML}" || fatal "Cannot write ${INIT_TOML}"
 
+    # 写后自检：必须能解析、version 非空、包含目标地址
+    python3 - "${INIT_TOML}" "${LAN_IP}" <<'PYVERIFY' || fatal "landscape_init.toml self-check failed"
+import sys
+toml_path, want_ip = sys.argv[1], sys.argv[2]
+
+try:
+    import tomllib
+except ImportError:
+    sys.exit('tomllib unavailable')
+
+with open(toml_path, 'rb') as f:
+    data = tomllib.load(f)
+
+errs = []
+if not data.get('version'):
+    errs.append('version is empty')
+ifaces = data.get('ifaces', [])
+if not any(i.get('name') == 'br_lan' for i in ifaces):
+    errs.append('no br_lan iface')
+svcs = data.get('dhcpv4_services', [])
+if not svcs:
+    errs.append('no dhcpv4_services')
+else:
+    got = svcs[0].get('config', {}).get('server_ip_addr')
+    if got != want_ip:
+        errs.append(f'server_ip_addr is {got!r}, want {want_ip!r}')
+if not data.get('route_lans'):
+    errs.append('no route_lans')
+
+if errs:
+    sys.exit('; '.join(errs))
+print(f'  OK  version={data["version"]}  ifaces={len(ifaces)}  lan={want_ip}')
+PYVERIFY
+
     ok "landscape_init.toml written (LAN ${LAN_IP}/${LAN_MASK})"
 fi
 install -d -m 0755 /mnt/etc/systemd/system/multi-user.target.wants \
@@ -564,7 +611,7 @@ echo ""
 echo "  Remove the install medium and reboot."
 echo ""
 echo "  First access once the router boots:"
-echo "    URL : https://192.168.5.1:6443"
+printf '    URL : https://%s:6443\n' "${LAN_IP}"
 echo "    User: root / root"
 echo "    Plug your computer into a LAN port of the router."
 echo ""
