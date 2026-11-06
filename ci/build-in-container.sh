@@ -207,16 +207,14 @@ check "装机脚本可执行位"
 [[ -x "${R}/root/install.sh" ]] || bad "缺少执行位（file_permissions 未生效）"
 ok
 
-check "networkmanager 不在"
-if [[ -d "${R}/usr/lib/NetworkManager" || -e "${R}/usr/bin/nmcli" ]]; then
-    echo ""
-    echo "--- NetworkManager 相关文件 ---"
-    ls "${R}/usr/lib/NetworkManager" 2>&1 | head -5
-    echo "--- 哪个包带来的 ---"
-    if [[ -f "${R}/var/lib/pacman/local/ALPM_DB_VERSION" ]]; then
-        grep -rl 'networkmanager' "${R}/var/lib/pacman/local/"*/desc 2>/dev/null | head -5
-    fi
-    bad "发现 NetworkManager"
+check "networkmanager 包未安装"
+# 以 pacman 本地数据库为准：安装过就有同名目录
+if compgen -G "${R}/var/lib/pacman/local/networkmanager-*" > /dev/null; then
+    bad "networkmanager 已安装"
+fi
+# NetworkManager 本体：守护进程与 CLI。dispatcher.d 目录可能由 open-vm-tools 等第三方创建，不算
+if [[ -e "${R}/usr/bin/NetworkManager" || -e "${R}/usr/bin/nmcli" ]]; then
+    bad "发现 NetworkManager 可执行文件"
 fi
 ok
 
