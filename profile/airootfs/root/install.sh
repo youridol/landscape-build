@@ -262,7 +262,10 @@ cfg = {
     ],
     "pacman_config": {"color": False, "parallel_downloads": 5},
     "profile_config": None,
-    "script": "minimal",
+    # 必须是 guided。minimal 是开发示例脚本，会强制使用
+    # Systemd-boot 并忽略配置里的 bootloader/hostname/users，
+    # 在 BIOS/MBR 上会装出一个无法引导的系统。
+    "script": "guided",
     "silent": True,
     "swap": {"enabled": False},
     "timezone": "Asia/Shanghai",
@@ -294,6 +297,24 @@ if ! archinstall --config /tmp/config.json --creds /tmp/creds.json --silent --of
 fi
 ok "Base system installed"
 
+# archinstall 返回 0 不代表目标系统还挂在 /mnt 上。
+# 后续所有步骤都依赖 /mnt，必须在这里先验证，否则会静默写空。
+if ! mountpoint -q /mnt; then
+    warn "/mnt is not a mountpoint after install; trying to remount from the disk"
+    ROOT_PART="$(lsblk -lnpo NAME,FSTYPE "${TARGET_DISK}" 2>/dev/null | awk '$2=="ext4"{print $1; exit}')"
+    [[ -n "${ROOT_PART}" ]] || fatal "Cannot find the root partition on ${TARGET_DISK}"
+    if ! mount "${ROOT_PART}" /mnt; then
+        fatal "Cannot mount ${ROOT_PART} on /mnt after install"
+    fi
+fi
+
+if [[ ! -d /mnt/etc ]] || [[ ! -f /mnt/etc/pacman.conf ]]; then
+    echo "--- /mnt contents ---"
+    ls -la /mnt 2>&1 | head -20
+    fatal "/mnt does not contain an installed system"
+fi
+ok "Target system is mounted at /mnt"
+
 # ---------------------------------------------------------------------------
 # 6. 恢复正式镜像源（ADR-0004）
 # ---------------------------------------------------------------------------
@@ -320,13 +341,15 @@ ok "pacman.conf restored"
 # ---------------------------------------------------------------------------
 info "Deploying Landscape into the target system"
 
-install -d -m 0755 /mnt/opt/landscape
+install -d -m 0755 /mnt/opt/landscape || fatal "Cannot create /mnt/opt/landscape"
 [[ -f /opt/landscape/landscape-webserver ]] \
     || fatal "Missing /opt/landscape/landscape-webserver"
-install -m 0755 /opt/landscape/landscape-webserver /mnt/usr/local/bin/landscape-webserver
+install -m 0755 /opt/landscape/landscape-webserver /mnt/usr/local/bin/landscape-webserver \
+    || fatal "Cannot install landscape-webserver into target"
 
 [[ -d /opt/landscape/static ]] || fatal "Missing /opt/landscape/static"
-cp -a /opt/landscape/static /mnt/opt/landscape/static
+cp -a /opt/landscape/static /mnt/opt/landscape/static \
+    || fatal "Cannot copy static assets into target"
 
 cat > /mnt/etc/systemd/system/landscape.service <<'UNIT_EOF'
 [Unit]
@@ -351,9 +374,12 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 UNIT_EOF
 
-install -d -m 0750 /mnt/root/.landscape-router
+install -d -m 0750 /mnt/root/.landscape-router || fatal "Cannot create Landscape config dir"
+install -d -m 0755 /mnt/etc/systemd/system/multi-user.target.wants \
+    || fatal "Cannot create multi-user.target.wants"
 ln -sf /etc/systemd/system/landscape.service \
-       /mnt/etc/systemd/system/multi-user.target.wants/landscape.service
+       /mnt/etc/systemd/system/multi-user.target.wants/landscape.service \
+    || fatal "Cannot enable landscape.service"
 ok "Landscape deployed"
 
 # ---------------------------------------------------------------------------
@@ -362,8 +388,12 @@ ok "Landscape deployed"
 info "Masking conflicting services"
 
 # 目标系统里由 Landscape 独占网卡与 53 端口
+install -d -m 0755 /mnt/etc/systemd/system \
+    || fatal "Cannot create /mnt/etc/systemd/system"
+
 for unit in systemd-networkd.service systemd-networkd.socket systemd-resolved.service; do
-    ln -sf /dev/null "/mnt/etc/systemd/system/${unit}"
+    ln -sf /dev/null "/mnt/etc/systemd/system/${unit}" \
+        || fatal "Cannot mask ${unit}"
 done
 
 for link in \
@@ -379,7 +409,8 @@ done
 
 # Landscape 启动时会改写此文件，必须存在且可写
 rm -f /mnt/etc/resolv.conf
-printf 'nameserver 127.0.0.1\n' > /mnt/etc/resolv.conf
+printf 'nameserver 127.0.0.1\n' > /mnt/etc/resolv.conf \
+    || fatal "Cannot write /mnt/etc/resolv.conf"
 ok "Conflicting services masked"
 
 # ---------------------------------------------------------------------------
