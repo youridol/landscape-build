@@ -96,6 +96,10 @@ PYUNZIP
 
 find "${LAND}/static" -type f | head -5
 echo "static 文件数：$(find "${LAND}/static" -type f | wc -l)"
+echo "--- ${LAND} 全部条目 ---"
+ls -la "${LAND}"
+echo "--- 二进制详情 ---"
+ls -la "${LAND}/landscape-webserver" || echo "二进制不存在！"
 echo "::endgroup::"
 
 echo "::group::构建本地 pacman 仓库"
@@ -167,7 +171,14 @@ ok()    { echo "OK"; }
 bad()   { echo "FAIL: $1"; exit 1; }
 
 check "Landscape 二进制"
-[[ -x "${R}/opt/landscape/landscape-webserver" ]] || bad "缺少或不可执行"
+if [[ ! -x "${R}/opt/landscape/landscape-webserver" ]]; then
+    echo ""
+    echo "--- 上传前的 profile 内容 ---"
+    ls -la "${PROFILE}/airootfs/opt/landscape" 2>&1
+    echo "--- squashfs 内的内容 ---"
+    ls -la "${R}/opt/landscape" 2>&1
+    bad "缺少或不可执行"
+fi
 ok
 
 check "Landscape static"
