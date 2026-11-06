@@ -361,6 +361,7 @@ magics = [
     (b'\x02\x21\x4c\x18', ['lz4', '-dc']),
 ]
 
+best = b''
 for magic, cmd in magics:
     if not shutil.which(cmd[0]):
         continue
@@ -371,16 +372,19 @@ for magic, cmd in magics:
             break
         pos = idx + 1
         p = subprocess.run(cmd, input=data[idx:], capture_output=True)
-        if p.returncode != 0 or not p.stdout:
+        out = p.stdout
+        if not out:
             continue
-        # 解压成功且结果是 ELF 才算命中
-        if p.stdout[:4] == b'\x7fELF':
-            sys.stdout.buffer.write(p.stdout)
-            sys.exit(0)
-        # zstd/xz 可能在尾部有填充；只要解压出大量数据也接受
-        if len(p.stdout) > 1024 * 1024:
-            sys.stdout.buffer.write(p.stdout)
-            sys.exit(0)
+        # bzImage 的压缩流后面可能还有别的段，解压器会报尾部错误，
+        # 但标准输出里仍是有效内核镜像，以长度取最大者。
+        if len(out) > len(best):
+            best = out
+        if len(out) > 1024 * 1024 and out[:4] == b'\x7fELF':
+            break
+
+if best:
+    sys.stdout.buffer.write(best)
+    sys.exit(0)
 sys.exit('decompress failed')
 PYDEC
 echo "解压脚本 stderr: $(cat /tmp/pydec.err 2>/dev/null)"
