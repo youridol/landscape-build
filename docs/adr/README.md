@@ -86,3 +86,34 @@
 ## 证据附录
 
 [`arch-localrepo-assumptions.md`](../../arch-localrepo-assumptions.md)：ADR-0004 所依赖的四个机械前提的逐条验证，含 pacman 7.1.0 实测输出。
+
+## 构建验证结果
+
+CI 已跑通，产物：
+
+| 项 | 值 |
+|---|---|
+| 文件名 | `landscape-router-2026.11.06-x86_64.iso` |
+| 大小 | 2.0 GB（1 001 456 扇区） |
+| SHA256 | `181e9b6dbe213d6f4851fcebd6e02e99764f83b808acc351de329b33f8957842` |
+| 运行 | <https://github.com/youridol/landscape-build/actions/runs/42162913035> |
+| 内核 | `7.2.14-arch1-1` |
+
+静态检查全部通过：Landscape 二进制与 static 就位、本地仓库 43 个包、安装脚本语法与执行位、无 NetworkManager、无 `systemd-resolvconf`、内核配置 19 项断言全过、`.BTF` section 存在（70 659 408 字节解压镜像内，offset `022f2000`）。
+
+### 调试中修正的三处认知
+
+1. **`airootfs` 拷贝不保留权限**。`mkarchiso` 用 `cp -af --no-preserve=ownership,mode`，二进制会退化为 `644`。必须在 `file_permissions` 里显式列出 `/opt/landscape/landscape-webserver`。
+
+2. **`modemmanager` 会拉进 NetworkManager**。releng 包列表里没有 `networkmanager`，但 `modemmanager` 依赖它。同时移除 `iwd`、`dhcpcd` 等竞争网络管理器，共删 12 个包。
+
+3. **`vmlinuz-linux` 是 bzImage**。以 `MZ` 开头，zstd 压缩流在偏移 21196，其后还跟着其他段。取解压结果最大者作为内核镜像，再用 `readelf -S` 找 `.BTF`。直接搜索 `IKCFG_ST` 原始字节找不到，必须先解压。
+
+### 尚未验证的部分
+
+ISO 未启动、未刷机、未在真实硬件上运行过。以下全部属于未验证：
+
+- 安装脚本能否在真实 live 环境跑通（目标盘探测、archinstall 调用、装后置）
+- Landscape 首次启动、`--auto` 初始化、`192.168.5.1:6443` 可达性
+- BIOS 与 UEFI 实际引导
+- 离线安装是否真的不联网完成
