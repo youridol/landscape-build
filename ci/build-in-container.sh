@@ -232,29 +232,51 @@ VML="$(find "${V}/mnt" -name 'vmlinuz-linux' | head -1)"
 [[ -n "${VML}" ]] || bad "找不到 vmlinuz-linux"
 echo "vmlinuz: ${VML}"
 
-IKC="$(find "${R}" "${V}/mnt" -name 'extract-ikconfig' -path '*/scripts/*' 2>/dev/null | head -1)"
-if [[ -n "${IKC}" ]]; then
-    bash "${IKC}" "${VML}" > /tmp/kconfig 2>/dev/null || true
-fi
+# 内嵌上游 scripts/extract-ikconfig 的逻辑：vmlinuz 是压缩内核，
+# IKCFG_ST 在解压后才可见，必须逐个尝试解压算法。
+cat > /tmp/extract-ikconfig <<'EIC_EOF'
+#!/bin/sh
+cf1='IKCFG_ST\037\213\010'
+cf2='0123456789'
+dump_config()
+{
+    if pos=`tr "$cf1\n$cf2" "\n$cf2=" < "$1" | grep -abo "^$cf2"`
+    then
+        pos=${pos%%:*}
+        tail -c+$(($pos+8)) "$1" | zcat > $tmp1 2> /dev/null
+        if [ $? != 1 ]
+        then
+            cat $tmp1
+            exit 0
+        fi
+    fi
+}
+try_decompress()
+{
+    for pos in `tr "$1\n$2" "\n$2=" < "$img" | grep -abo "^$2"`
+    do
+        pos=${pos%%:*}
+        tail -c+$pos "$img" | $3 > $tmp2 2> /dev/null
+        dump_config $tmp2
+    done
+}
+img=$1
+tmp1=/tmp/ikconfig$$.1
+tmp2=/tmp/ikconfig$$.2
+trap "rm -f $tmp1 $tmp2" 0
+dump_config "$img"
+try_decompress '\037\213\010' xy    gunzip
+try_decompress '\3757zXZ\000' abcde unxz
+try_decompress 'BZh'          xy    bunzip2
+try_decompress '\135\0\0\0'   xxx   unlzma
+try_decompress '\211\114\132' xy    'lzop -d'
+try_decompress '\002\041\114\030' xyy 'lz4 -d -l'
+try_decompress '\050\265\057\375' xxx unzstd
+exit 1
+EIC_EOF
+chmod +x /tmp/extract-ikconfig
 
-if [[ ! -s /tmp/kconfig ]]; then
-    python3 - "${VML}" > /tmp/kconfig <<'PYKCFG'
-import sys, gzip, io, zlib
-data = open(sys.argv[1], 'rb').read()
-i = data.find(b'IKCFG_ST')
-if i < 0:
-    sys.exit('no IKCFG_ST magic')
-raw = data[i + 8:]
-for fn in (lambda: gzip.GzipFile(fileobj=io.BytesIO(raw)).read(),
-           lambda: zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(raw)):
-    try:
-        sys.stdout.buffer.write(fn()); break
-    except Exception:
-        continue
-else:
-    sys.exit('decompress failed')
-PYKCFG
-fi
+sh /tmp/extract-ikconfig "${VML}" > /tmp/kconfig 2>/dev/null || true
 
 [[ -s /tmp/kconfig ]] || bad "无法从 vmlinuz 提取内核配置"
 echo "配置行数：$(wc -l < /tmp/kconfig)"
